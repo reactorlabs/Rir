@@ -325,8 +325,7 @@ void CodeVerifier::verifyFunctionLayout(SEXP sexp, InterpreterInstance* ctx) {
                              "invalid index");
             }
 
-            if (*cptr == Opcode::mk_promise_ ||
-                *cptr == Opcode::mk_eager_promise_) {
+            if (*cptr == Opcode::mk_promise_) {
                 unsigned* promidx = reinterpret_cast<Immediate*>(cptr + 1);
                 objs.push_back(c->getPromise(*promidx));
             }

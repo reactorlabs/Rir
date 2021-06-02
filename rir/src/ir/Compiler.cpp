@@ -194,7 +194,7 @@ struct LoadArgsResult {
 };
 
 Code* compilePromise(CompilerContext& ctx, SEXP exp);
-Code* compilePromiseNoRir(CompilerContext& ctx, SEXP exp);
+
 // If we are in a void context, then compile expression will not leave a value
 // on the stack. For example in `{a; b}` the expression `a` is in a void
 // context, but `b` is not. In `while(...) {...}` all loop body expressions are
@@ -205,8 +205,7 @@ void compileCall(CompilerContext& ctx, SEXP ast, SEXP fun, SEXP args,
 
 // EAGER_PROMISE_FROM_TOS is for the special case when the expression has
 // already been evaluated: wrap the value at TOS into a promise. This is used in
-// particular for the complex assignment: the expression
-//    f(x) <- z
+// particular for the complex assignment: the expression f(x) <- z
 // returns z, z must be evaluated first, and z must be passed as en eager
 // promise to `f<-` as its last argument.
 enum class ArgType {
@@ -333,12 +332,9 @@ bool compileSimpleFor(CompilerContext& ctx, SEXP fullAst, SEXP sym, SEXP seq,
         // Note that we call the builtin `for` and pass the body as a
         // promise to lower the bytecode size
 
-        // 1) Finish creating the seq, and add its SEXP as a promise
-        // (it's eager but it needs to be a promise to be an arg)
+        // 1) Finish creating the seq
         cs << BC::colon();
         cs.addSrc(seq);
-        Code* seqProm = compilePromise(ctx, seq);
-        size_t seqPromIdx = cs.addPromise(seqProm);
 
         // 2) Create a promise with the body
         Code* bodyProm = compilePromise(ctx, body);
@@ -346,13 +342,12 @@ bool compileSimpleFor(CompilerContext& ctx, SEXP fullAst, SEXP sym, SEXP seq,
 
         // 3) Add the function, arguments, and call
         Context assumptions;
-        assumptions.setEager(0);
+        assumptions.setEager(0); // The seq
         assumptions.add(Assumption::CorrectOrderOfArguments);
         assumptions.add(Assumption::NotTooManyArguments);
 
-        cs << BC::ldfun(symbol::For) << BC::swap()
-           << BC::mkEagerPromise(seqPromIdx) << BC::mkPromise(bodyPromIdx)
-           << BC::call(2, fullAst, assumptions);
+        cs << BC::ldfun(symbol::For) << BC::swap() << BC::mkEagerPromise(seq)
+           << BC::mkPromise(bodyPromIdx) << BC::call(2, fullAst, assumptions);
         if (voidContext)
             cs << BC::pop();
         else if (Compiler::profile)
@@ -361,7 +356,6 @@ bool compileSimpleFor(CompilerContext& ctx, SEXP fullAst, SEXP sym, SEXP seq,
         cs << BC::br(endBranch);
         cs << skipRegularForBranch;
     }
-    // } else {
 
     // m' <- colonCastLhs(m')
     cs << BC::swap() << BC::colonCastLhs() << BC::recordType()
@@ -1632,71 +1626,71 @@ static void compileLoadOneArg(CompilerContext& ctx, SEXP arg, ArgType arg_type,
     int i = res.numArgs;
     res.numArgs += 1;
 
-    if (CAR(arg) == R_DotsSymbol) {
+    SEXP expr = CAR(arg);
+
+    if (expr == R_DotsSymbol) {
         cs << BC::push(R_DotsSymbol);
         res.names.push_back(R_DotsSymbol);
         res.hasDots = true;
-        return;
-    }
-    if (CAR(arg) == R_MissingArg) {
+
+    } else if (expr == R_MissingArg) {
         cs << BC::push(R_MissingArg);
         res.names.push_back(R_NilValue);
-        return;
-    }
 
-    // remember if the argument had a name associated
-    res.names.push_back(TAG(arg));
-    if (TAG(arg) != R_NilValue) {
-        res.hasNames = true;
-    }
-
-    if (arg_type == ArgType::RAW_VALUE) {
-        compileExpr(ctx, CAR(arg), false);
-        return;
-    }
-
-    Code* prom;
-    if (arg_type == ArgType::EAGER_PROMISE) {
-        // Compile the expression to evaluate it eagerly, and
-        // wrap the return value in a promise without rir code
-        compileExpr(ctx, CAR(arg), false);
-        prom = compilePromiseNoRir(ctx, CAR(arg));
-    }
-
-    else if (arg_type == ArgType::EAGER_PROMISE_FROM_TOS) {
-        // The value we want to wrap in the argument's promise is
-        // already on TOS, no nead to compile the expression.
-        // Wrap it in a promise without rir code.
-        prom = compilePromiseNoRir(ctx, CAR(arg));
-    } else { // ArgType::PROMISE
-        // Compile the expression as a promise.
-        prom = compilePromise(ctx, CAR(arg));
-    }
-
-    size_t idx = cs.addPromise(prom);
-
-    if (arg_type == ArgType::EAGER_PROMISE ||
-        arg_type == ArgType::EAGER_PROMISE_FROM_TOS) {
-        res.assumptions.setEager(i);
-        cs << BC::mkEagerPromise(idx);
     } else {
-        // "safe force" the argument to get static assumptions
-        SEXP known = safeEval(CAR(arg));
-        // TODO: If we add more assumptions should probably abstract with
-        // testArg in interp.cpp. For now they're both much different though
-        if (known != R_UnboundValue) {
+
+        // remember if the argument had a name associated
+        res.names.push_back(TAG(arg));
+        if (TAG(arg) != R_NilValue)
+            res.hasNames = true;
+
+        switch (arg_type) {
+        case ArgType::RAW_VALUE: {
+            compileExpr(ctx, expr, false);
+            break;
+        }
+        case ArgType::EAGER_PROMISE: {
+            // Compile the expression to evaluate it eagerly, and
+            // wrap the return value in a promise without rir code
+            compileExpr(ctx, expr, false);
             res.assumptions.setEager(i);
-            if (!isObject(known)) {
-                res.assumptions.setNotObj(i);
-                if (IS_SIMPLE_SCALAR(known, REALSXP))
-                    res.assumptions.setSimpleReal(i);
-                if (IS_SIMPLE_SCALAR(known, INTSXP))
-                    res.assumptions.setSimpleInt(i);
+            cs << BC::mkEagerPromise(expr);
+            break;
+        }
+        case ArgType::EAGER_PROMISE_FROM_TOS: {
+            // The value we want to wrap in the argument's promise is
+            // already on TOS, no need to compile the expression.
+            // Wrap it in a promise without rir code.
+            res.assumptions.setEager(i);
+            cs << BC::mkEagerPromise(expr); // Or R_NilValue?
+            break;
+        }
+        case ArgType::PROMISE: {
+            // Compile the expression as a promise.
+            // "Safe force" the argument to get static assumptions
+            SEXP known = safeEval(expr);
+            // TODO: If we add more assumptions should probably abstract with
+            // testArg in interp.cpp. For now they're both much different though
+            if (known != R_UnboundValue) {
+                res.assumptions.setEager(i);
+                if (!isObject(known)) {
+                    res.assumptions.setNotObj(i);
+                    if (IS_SIMPLE_SCALAR(known, REALSXP))
+                        res.assumptions.setSimpleReal(i);
+                    if (IS_SIMPLE_SCALAR(known, INTSXP))
+                        res.assumptions.setSimpleInt(i);
+                }
+                cs << BC::push(known);
+                cs << BC::mkEagerPromise(expr);
+            } else {
+                Code* prom = compilePromise(ctx, expr);
+                size_t idx = cs.addPromise(prom);
+                cs << BC::mkPromise(idx);
             }
-            cs << BC::push(known);
-            cs << BC::mkEagerPromise(idx);
-        } else {
-            cs << BC::mkPromise(idx);
+            break;
+        }
+        default:
+            assert(false);
         }
     }
 }
@@ -1846,16 +1840,6 @@ Code* compilePromise(CompilerContext& ctx, SEXP exp) {
     ctx.pushPromiseContext(exp);
     compileExpr(ctx, exp);
     ctx.cs() << BC::ret();
-    return ctx.pop();
-}
-
-/* Create a promise code object without compiling the AST to RIR bytecode.
-   This is useful for evaluated promises: the bytecode is never used since
-   the value is already stored in the promise.
-*/
-Code* compilePromiseNoRir(CompilerContext& ctx, SEXP exp) {
-    ctx.pushPromiseContext(exp);
-    ctx.cs() << BC::push(R_NilValue) << BC::ret();
     return ctx.pop();
 }
 

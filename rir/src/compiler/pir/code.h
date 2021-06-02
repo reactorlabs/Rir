@@ -39,7 +39,9 @@ class Code {
 
     size_t numInstrs() const;
 
+    bool hasRirSrc() const { return rirSrc(); }
     virtual rir::Code* rirSrc() const = 0;
+    virtual unsigned astIdx() const = 0;
 };
 
 template <CodeTag CTAG, class Base>

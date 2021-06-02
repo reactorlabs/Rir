@@ -381,7 +381,7 @@ bool Inline::apply(Compiler&, ClosureVersion* cls, Code* code,
                                         cls->promises().at(newPromId[id]));
                                 } else {
                                     Promise* clone =
-                                        cls->createProm(mk->prom()->rirSrc());
+                                        cls->createPromClone(mk->prom());
                                     BB* promCopy = BBTransform::clone(
                                         mk->prom()->entry, clone, cls);
                                     clone->entry = promCopy;

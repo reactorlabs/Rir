@@ -9,11 +9,10 @@ namespace rir {
 namespace pir {
 
 Promise::Promise(ClosureVersion* owner, unsigned id, rir::Code* rirSrc)
-    : id(id), owner(owner), rirSrc_(rirSrc), srcPoolIdx_(rirSrc->src) {
-    assert(src_pool_at(globalContext(), srcPoolIdx_));
-}
+    : id(id), owner(owner), rirSrc_(rirSrc), ast_(0) {}
 
-unsigned Promise::srcPoolIdx() const { return srcPoolIdx_; }
+Promise::Promise(ClosureVersion* owner, unsigned id, unsigned ast)
+    : id(id), owner(owner), rirSrc_(nullptr), ast_(ast) {}
 
 LdFunctionEnv* Promise::env() const {
     LdFunctionEnv* e = nullptr;

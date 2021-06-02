@@ -79,6 +79,8 @@ class ClosureVersion
     void printBBGraph(std::ostream& out, bool omitDeoptBranches) const;
 
     Promise* createProm(rir::Code* rirSrc);
+    Promise* createEagerProm(unsigned ast);
+    Promise* createPromClone(Promise* p);
 
     Promise* promise(unsigned id) const { return promises_.at(id); }
     const std::vector<Promise*>& promises() { return promises_; }
@@ -95,6 +97,7 @@ class ClosureVersion
     size_t numNonDeoptInstrs() const;
 
     rir::Code* rirSrc() const override final;
+    unsigned astIdx() const override final;
 
     friend std::ostream& operator<<(std::ostream& out,
                                     const ClosureVersion& e) {

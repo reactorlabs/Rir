@@ -332,9 +332,7 @@ rir::Function* Backend::doCompile(ClosureVersion* cls,
     }
 
     assert(signature.formalNargs() == cls->nargs());
-    std::unordered_map<Code*,
-                       std::unordered_map<Code*, std::pair<unsigned, MkArg*>>>
-        promMap;
+    std::unordered_map<Code*, PromMap> promMap;
     std::function<void(Code*)> lowerAndScanForPromises = [&](Code* c) {
         if (promMap.count(c))
             return;
@@ -353,7 +351,7 @@ rir::Function* Backend::doCompile(ClosureVersion* cls,
         Visitor::run(c->entry, [&](Instruction* i) {
             if (auto mk = MkArg::Cast(i)) {
                 auto p = mk->prom();
-                if (!pm.count(p)) {
+                if (!pm.count(p) && p->hasRirSrc()) {
                     lowerAndScanForPromises(p);
                     pm[p] = {pm.size(), mk};
                 }
@@ -368,14 +366,16 @@ rir::Function* Backend::doCompile(ClosureVersion* cls,
     }
 
     std::unordered_map<Code*, rir::Code*> done;
-    std::function<rir::Code*(Code*)> compile = [&](Code* c) {
+    std::function<rir::Code*(Code*)> compile = [&](Code* c) -> rir::Code* {
         if (done.count(c))
             return done.at(c);
+        if (!c->hasRirSrc())
+            return nullptr;
         NeedsRefcountAdjustment refcount;
         approximateRefcount(cls, c, refcount, log);
         std::unordered_set<Instruction*> needsLdVarForUpdate;
         approximateNeedsLdVarForUpdate(c, needsLdVarForUpdate);
-        auto res = done[c] = rir::Code::New(c->rirSrc()->src);
+        auto res = done[c] = rir::Code::New(c->astIdx());
         // Can we do better?
         preserve(res->container());
         jit.compile(res, c, promMap.at(c), refcount, needsLdVarForUpdate, log);
@@ -385,10 +385,14 @@ rir::Function* Backend::doCompile(ClosureVersion* cls,
         for (auto p : pm)
             proms.at(p.second.first) = p.first;
         for (auto p : proms) {
-            auto code = compile(p);
-            if (pm.at(p).second->noReflection)
-                res->flags.set(rir::Code::NoReflection);
-            res->addExtraPoolEntry(code->container());
+            if (auto code = compile(p)) {
+                if (pm.at(p).second->noReflection)
+                    res->flags.set(rir::Code::NoReflection);
+                res->addExtraPoolEntry(code->container());
+            } else {
+                if (pm.at(p).second->noReflection)
+                    res->flags.set(rir::Code::NoReflection);
+            }
         }
         return res;
     };

@@ -2028,6 +2028,7 @@ void LowerFunctionLLVM::compile() {
     builder.SetInsertPoint(entryBlock);
 
     if (LLVMDebugInfo()) {
+        DI->emitLocation(builder, 0);
         std::array<llvm::DIType*, 4> argDITypes = {
             DI->VoidPtrType, DI->VoidPtrType, DI->SEXPType, DI->SEXPType};
         auto arg = fun->arg_begin();
@@ -4423,8 +4424,14 @@ void LowerFunctionLLVM::compile() {
 
             case Tag::MkArg: {
                 auto p = MkArg::Cast(i);
-                auto id = promMap.at(p->prom());
-                auto exp = loadPromise(paramCode(), id.first);
+                // auto id = promMap.at(p->prom());
+                auto exp =
+                    p->prom()->hasRirSrc()
+                        ? loadPromise(paramCode(), promMap.at(p->prom()).first)
+                        : constant(
+                              cp_pool_at(globalContext(), p->prom()->astIdx()),
+                              t::SEXP);
+
                 // if the env of a promise is elided we need to put a dummy env,
                 // to forcePromise complaining.
                 if (p->hasEnv()) {

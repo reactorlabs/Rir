@@ -2472,9 +2472,9 @@ SEXP evalRirCode(Code* c, InterpreterInstance* ctx, SEXP env,
         }
 
         INSTRUCTION(mk_eager_promise_) {
-            Immediate id = readImmediate();
+            SEXP ast = readConst(ctx, readImmediate());
             advanceImmediate();
-            SEXP prom = Rf_mkPROMISE(c->getPromise(id)->container(), env);
+            SEXP prom = Rf_mkPROMISE(ast, R_NilValue);
             SEXP val = ostack_pop(ctx);
             assert(TYPEOF(val) != PROMSXP);
             ENSURE_NAMEDMAX(val);

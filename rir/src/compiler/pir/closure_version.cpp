@@ -80,10 +80,23 @@ Promise* ClosureVersion::createProm(rir::Code* rirSrc) {
     return p;
 }
 
+Promise* ClosureVersion::createEagerProm(unsigned ast) {
+    Promise* p = new Promise(this, promises_.size(), ast);
+    promises_.push_back(p);
+    return p;
+}
+
+Promise* ClosureVersion::createPromClone(Promise* other) {
+    Promise* p = other->hasRirSrc()
+                     ? new Promise(this, promises_.size(), other->rirSrc())
+                     : new Promise(this, promises_.size(), other->astIdx());
+    promises_.push_back(p);
+    return p;
+}
+
 ClosureVersion::~ClosureVersion() {
     for (auto p : promises_) {
-        if (p)
-            delete p;
+        delete p;
     }
 }
 
@@ -166,6 +179,8 @@ std::ostream& operator<<(std::ostream& out,
 rir::Code* ClosureVersion::rirSrc() const {
     return owner()->rirFunction()->body();
 }
+
+unsigned ClosureVersion::astIdx() const { return rirSrc()->src; }
 
 } // namespace pir
 } // namespace rir

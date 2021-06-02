@@ -247,15 +247,13 @@ class BC {
     }
 
     bool hasPromargs() const {
-        return bc == Opcode::mk_promise_ || bc == Opcode::mk_eager_promise_ ||
-               bc == Opcode::push_code_;
+        return bc == Opcode::mk_promise_ || bc == Opcode::push_code_;
     }
 
     void addMyPromArgsTo(std::vector<FunIdx>& proms) {
         switch (bc) {
         case Opcode::push_code_:
         case Opcode::mk_promise_:
-        case Opcode::mk_eager_promise_:
             proms.push_back(immediate.arg_idx);
             break;
         default: {}
@@ -332,7 +330,7 @@ BC_NOARGS(V, _)
     inline static BC ldvarSuper(SEXP sym);
     inline static BC ldddvar(SEXP sym);
     inline static BC mkPromise(FunIdx prom);
-    inline static BC mkEagerPromise(FunIdx prom);
+    inline static BC mkEagerPromise(SEXP ast);
     inline static BC stvar(SEXP sym);
     inline static BC stvarCached(SEXP sym, uint32_t cacheSlot);
     inline static BC stvarSuper(SEXP sym);
@@ -558,6 +556,7 @@ BC_NOARGS(V, _)
         case Opcode::stvar_super_:
         case Opcode::ldvar_for_update_:
         case Opcode::missing_:
+        case Opcode::mk_eager_promise_:
             memcpy(&immediate.pool, pc, sizeof(PoolIdx));
             break;
         case Opcode::ldvar_cached_:
@@ -580,7 +579,6 @@ BC_NOARGS(V, _)
             memcpy(&immediate.guard_fun_args, pc, sizeof(GuardFunArgs));
             break;
         case Opcode::mk_promise_:
-        case Opcode::mk_eager_promise_:
         case Opcode::push_code_:
             memcpy(&immediate.fun, pc, sizeof(FunIdx));
             break;

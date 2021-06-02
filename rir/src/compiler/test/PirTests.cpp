@@ -375,6 +375,7 @@ class MockBB : public BB {
             entry = new MockBB;
         }
         rir::Code* rirSrc() const override final { return nullptr; }
+        unsigned astIdx() const override final { return 0; }
     };
 
   public:

@@ -121,9 +121,11 @@ BC BC::push_code(FunIdx prom) {
     i.fun = prom;
     return BC(Opcode::push_code_, i);
 }
-BC BC::mkEagerPromise(FunIdx prom) {
+BC BC::mkEagerPromise(SEXP ast) {
+    assert(TYPEOF(ast) != PROMSXP);
+    assert(!Code::check(ast));
     ImmediateArguments i;
-    i.fun = prom;
+    i.pool = Pool::insert(ast);
     return BC(Opcode::mk_eager_promise_, i);
 }
 BC BC::mkPromise(FunIdx prom) {

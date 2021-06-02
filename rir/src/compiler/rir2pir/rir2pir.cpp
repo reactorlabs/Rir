@@ -563,13 +563,18 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         break;
     }
 
-    case Opcode::mk_eager_promise_:
+    case Opcode::mk_eager_promise_: {
+        Value* val = pop();
+        assert(val != UnboundValue::instance());
+        Promise* prom = insert.function->createEagerProm(bc.immediate.pool);
+        prom->entry = new BB(prom, prom->nextBBId++);
+        prom->entry->append(new Unreachable());
+        push(insert(new MkArg(prom, val, env)));
+        break;
+    }
     case Opcode::mk_promise_: {
         unsigned promi = bc.immediate.i;
         rir::Code* promiseCode = srcCode->getPromise(promi);
-        Value* val = UnboundValue::instance();
-        if (bc.bc == Opcode::mk_eager_promise_)
-            val = pop();
         Promise* prom = insert.function->createProm(promiseCode);
         {
             Builder promiseBuilder(insert.function, prom);
@@ -578,7 +583,8 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
                 return false;
             }
         }
-        if (val == UnboundValue::instance() && Query::pureExceptDeopt(prom)) {
+        Value* val = UnboundValue::instance();
+        if (Query::pureExceptDeopt(prom)) {
             val = tryInlinePromise(promiseCode, insert);
             if (!val) {
                 log.warn("Failed to inline a promise");
@@ -699,6 +705,8 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
                         args[i] = mk->eagerArg();
                     } else {
                         assert(at(nargs - 1 - i) == args[i]);
+                        // only eager args can be missing rirSrc
+                        assert(mk->prom()->rirSrc());
                         args[i] =
                             tryCreateArg(mk->prom()->rirSrc(), insert, true);
                         if (!args[i]) {
@@ -770,31 +778,33 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
                 Rf_findFun(Rf_install("match.arg"), R_BaseNamespace);
             if (ti.monomorphic == argmatchFun && matchedArgs.size() == 1) {
                 if (auto mk = MkArg::Cast(matchedArgs[0])) {
-                    auto varName = mk->prom()->rirSrc()->trivialExpr;
-                    if (TYPEOF(varName) == SYMSXP) {
-                        auto& formals = cls->owner()->formals();
-                        auto f = std::find(formals.names().begin(),
-                                           formals.names().end(), varName);
-                        if (f != formals.names().end()) {
-                            auto pos = f - formals.names().begin();
-                            if (formals.hasDefaultArgs() &&
-                                formals.defaultArgs()[pos] != R_NilValue) {
-                                if (auto options = rir::Code::check(
-                                        formals.defaultArgs()[pos])) {
-                                    auto ast = src_pool_at(globalContext(),
-                                                           options->src);
-                                    if (CAR(ast) == symbol::c) {
-                                        bool allStrings = true;
-                                        for (auto c : RList(CDR(ast))) {
-                                            if (TYPEOF(c) != STRSXP)
-                                                allStrings = false;
-                                        }
-                                        if (allStrings) {
-                                            auto optionList =
-                                                Rf_eval(ast, R_GlobalEnv);
-                                            auto opt =
-                                                insert(new LdConst(optionList));
-                                            matchedArgs.push_back(opt);
+                    if (mk->prom()->rirSrc()) {
+                        auto varName = mk->prom()->rirSrc()->trivialExpr;
+                        if (TYPEOF(varName) == SYMSXP) {
+                            auto& formals = cls->owner()->formals();
+                            auto f = std::find(formals.names().begin(),
+                                               formals.names().end(), varName);
+                            if (f != formals.names().end()) {
+                                auto pos = f - formals.names().begin();
+                                if (formals.hasDefaultArgs() &&
+                                    formals.defaultArgs()[pos] != R_NilValue) {
+                                    if (auto options = rir::Code::check(
+                                            formals.defaultArgs()[pos])) {
+                                        auto ast = src_pool_at(globalContext(),
+                                                               options->src);
+                                        if (CAR(ast) == symbol::c) {
+                                            bool allStrings = true;
+                                            for (auto c : RList(CDR(ast))) {
+                                                if (TYPEOF(c) != STRSXP)
+                                                    allStrings = false;
+                                            }
+                                            if (allStrings) {
+                                                auto optionList =
+                                                    Rf_eval(ast, R_GlobalEnv);
+                                                auto opt = insert(
+                                                    new LdConst(optionList));
+                                                matchedArgs.push_back(opt);
+                                            }
                                         }
                                     }
                                 }

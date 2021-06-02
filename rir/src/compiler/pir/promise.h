@@ -2,6 +2,7 @@
 #define COMPILER_PROMISE_H
 
 #include "code.h"
+#include "runtime/Code.h"
 
 namespace rir {
 namespace pir {
@@ -18,8 +19,10 @@ class Promise : public CodeImpl<CodeTag::Promise, Promise> {
         return out;
     }
 
-    unsigned srcPoolIdx() const;
     rir::Code* rirSrc() const override final { return rirSrc_; }
+    unsigned astIdx() const override final {
+        return hasRirSrc() ? rirSrc()->src : ast_;
+    }
 
     LdFunctionEnv* env() const;
 
@@ -27,9 +30,10 @@ class Promise : public CodeImpl<CodeTag::Promise, Promise> {
 
   private:
     rir::Code* rirSrc_;
-    const unsigned srcPoolIdx_;
+    unsigned ast_;
     friend class ClosureVersion;
     Promise(ClosureVersion* owner, unsigned id, rir::Code* rirSrc);
+    Promise(ClosureVersion* owner, unsigned id, unsigned ast);
 };
 
 } // namespace pir

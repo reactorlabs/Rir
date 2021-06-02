@@ -51,6 +51,7 @@ void BC::write(CodeStream& cs) const {
     case Opcode::stvar_:
     case Opcode::stvar_super_:
     case Opcode::missing_:
+    case Opcode::mk_eager_promise_:
         cs.insert(immediate.pool);
         return;
 
@@ -80,7 +81,6 @@ void BC::write(CodeStream& cs) const {
         break;
 
     case Opcode::mk_promise_:
-    case Opcode::mk_eager_promise_:
     case Opcode::push_code_:
         cs.insert(immediate.fun);
         return;
@@ -139,6 +139,7 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
         case Opcode::stvar_:
         case Opcode::stvar_super_:
         case Opcode::missing_:
+        case Opcode::mk_eager_promise_:
             i.pool = Pool::insert(ReadItem(refTable, inp));
             break;
         case Opcode::ldvar_cached_:
@@ -178,7 +179,6 @@ void BC::deserialize(SEXP refTable, R_inpstream_t inp, Opcode* code,
         case Opcode::record_type_:
         case Opcode::record_test_:
         case Opcode::mk_promise_:
-        case Opcode::mk_eager_promise_:
         case Opcode::push_code_:
         case Opcode::br_:
         case Opcode::brtrue_:
@@ -234,6 +234,7 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
         case Opcode::stvar_:
         case Opcode::stvar_super_:
         case Opcode::missing_:
+        case Opcode::mk_eager_promise_:
             WriteItem(Pool::get(i.pool), refTable, out);
             break;
         case Opcode::ldvar_cached_:
@@ -269,7 +270,6 @@ void BC::serialize(SEXP refTable, R_outpstream_t out, const Opcode* code,
         case Opcode::record_type_:
         case Opcode::record_test_:
         case Opcode::mk_promise_:
-        case Opcode::mk_eager_promise_:
         case Opcode::push_code_:
         case Opcode::br_:
         case Opcode::brtrue_:
@@ -369,6 +369,7 @@ void BC::print(std::ostream& out) const {
         break;
     }
     case Opcode::push_:
+    case Opcode::mk_eager_promise_:
         out << Print::dumpSexp(immediateConst());
         break;
     case Opcode::ldfun_:
@@ -452,7 +453,6 @@ void BC::print(std::ostream& out) const {
 #undef V
         break;
     case Opcode::mk_promise_:
-    case Opcode::mk_eager_promise_:
     case Opcode::push_code_:
         out << std::hex << immediate.fun << std::dec;
         break;
