@@ -567,8 +567,15 @@ bool Rir2Pir::compileBC(const BC& bc, Opcode* pos, Opcode* nextPos,
         Value* val = pop();
         assert(val != UnboundValue::instance());
         Promise* prom = insert.function->createEagerProm(bc.immediate.pool);
-        prom->entry = new BB(prom, prom->nextBBId++);
-        prom->entry->append(new Unreachable());
+        // prom->entry = new BB(prom, prom->nextBBId++);
+        // prom->entry->append(new LdConst(R_NilValue));
+        // prom->entry->append(new Return());
+        // push(insert(new MkArg(prom, val, env)));
+        {
+            Builder promiseBuilder(insert.function, prom);
+            auto res = promiseBuilder(new LdConst(R_NilValue));
+            promiseBuilder(new Return(res));
+        }
         push(insert(new MkArg(prom, val, env)));
         break;
     }
