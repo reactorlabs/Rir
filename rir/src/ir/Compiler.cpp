@@ -1645,9 +1645,8 @@ SIMPLE_INSTRUCTIONS(V, _)
     return false;
 }
 
-
-static void compileLoadOneArg(CompilerContext& ctx, SEXP arg, ArgType arg_type, LoadArgsResult & res)
-{
+static void compileLoadOneArg(CompilerContext& ctx, SEXP arg, ArgType arg_type,
+                              LoadArgsResult& res) {
     // Prepare the argument arg for a function call.
     // The bytecode generated will return the result either as a promise, an
     // evaluated promise, or a raw value.
@@ -1656,62 +1655,29 @@ static void compileLoadOneArg(CompilerContext& ctx, SEXP arg, ArgType arg_type, 
     int i = res.numArgs;
     res.numArgs += 1;
 
-    if (CAR(arg) == R_DotsSymbol) {
+    SEXP expr = CAR(arg);
+
+    if (expr == R_DotsSymbol) {
         cs << BC::push(R_DotsSymbol);
         res.names.push_back(R_DotsSymbol);
         res.hasDots = true;
-        return;
-    }
-    if (CAR(arg) == R_MissingArg) {
+
+    } else if (expr == R_MissingArg) {
         cs << BC::push(R_MissingArg);
         res.names.push_back(R_NilValue);
-        return;
-    }
 
-    // remember if the argument had a name associated
-    res.names.push_back(TAG(arg));
-    if (TAG(arg) != R_NilValue)
-    {
-        res.hasNames = true;
-    }
+    } else {
 
+        // remember if the argument had a name associated
+        res.names.push_back(TAG(arg));
+        if (TAG(arg) != R_NilValue)
+            res.hasNames = true;
 
-    if (arg_type == ArgType::RAW_VALUE) {
-        compileExpr(ctx, CAR(arg), false);
-        return;
-    }
-
-    Code* prom;
-    if (arg_type == ArgType::EAGER_PROMISE) {
-        // Compile the expression to evaluate it eagerly, and
-        // wrap the return value in a promise without rir code
-        compileExpr(ctx, CAR(arg), false);
-        prom = compilePromiseNoRir(ctx, CAR(arg));
-    }
-
-    else if (arg_type == ArgType::EAGER_PROMISE_FROM_TOS) {
-        // The value we want to wrap in the argument's promise is
-        // already on TOS, no nead to compile the expression.
-        // Wrap it in a promise without rir code.
-        prom = compilePromiseNoRir(ctx, CAR(arg));
-    } else { // ArgType::PROMISE
-        // Compile the expression as a promise.
-        prom = compilePromise(ctx, CAR(arg));
-    }
-
-    size_t idx = cs.addPromise(prom);
-
-    if (arg_type == ArgType::EAGER_PROMISE || arg_type == ArgType::EAGER_PROMISE_FROM_TOS) {
-        res.assumptions.setEager(i);
-        cs << BC::mkEagerPromise(idx);
-    }
-    else
-    {
-        // "safe force" the argument to get static assumptions
-        SEXP known = safeEval(CAR(arg));
-        // TODO: If we add more assumptions should probably abstract with
-        // testArg in interp.cpp. For now they're both much different though
+        SEXP known = safeEval(expr);
         if (known != R_UnboundValue) {
+            // TODO: If we add more assumptions should probably abstract
+            // with testArg in interp.cpp. For now they're both much
+            // different though
             res.assumptions.setEager(i);
             if (!isObject(known)) {
                 res.assumptions.setNotObj(i);
@@ -1720,10 +1686,44 @@ static void compileLoadOneArg(CompilerContext& ctx, SEXP arg, ArgType arg_type, 
                 if (IS_SIMPLE_SCALAR(known, INTSXP))
                     res.assumptions.setSimpleInt(i);
             }
-            cs << BC::push(known);
-            cs << BC::mkEagerPromise(idx);
+            if (arg_type != ArgType::EAGER_PROMISE_FROM_TOS)
+                cs << BC::push(known);
         } else {
-            cs << BC::mkPromise(idx);
+            switch (arg_type) {
+            case ArgType::RAW_VALUE: {
+                compileExpr(ctx, expr, false);
+                break;
+            }
+            case ArgType::EAGER_PROMISE: {
+                // Compile the expression to evaluate it eagerly, and
+                // wrap the return value in a promise without rir code
+                compileExpr(ctx, expr, false);
+                res.assumptions.setEager(i);
+                Code* prom = compilePromiseNoRir(ctx, expr);
+                size_t idx = cs.addPromise(prom);
+                cs << BC::mkEagerPromise(idx);
+                break;
+            }
+            case ArgType::EAGER_PROMISE_FROM_TOS: {
+                // The value we want to wrap in the argument's promise is
+                // already on TOS, no need to compile the expression.
+                // Wrap it in a promise without rir code.
+                res.assumptions.setEager(i);
+                Code* prom = compilePromiseNoRir(ctx, expr);
+                size_t idx = cs.addPromise(prom);
+                cs << BC::mkEagerPromise(idx);
+                break;
+            }
+            case ArgType::PROMISE: {
+                // Compile the expression as a promise.
+                Code* prom = compilePromise(ctx, expr);
+                size_t idx = cs.addPromise(prom);
+                cs << BC::mkPromise(idx);
+                break;
+            }
+            default:
+                assert(false);
+            }
         }
     }
 }
