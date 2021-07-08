@@ -1706,7 +1706,8 @@ static void compileLoadOneArg(CompilerContext& ctx, SEXP arg, ArgType arg_type, 
         // The value we want to wrap in the argument's promise is
         // already on TOS, no nead to compile the expression.
         // Wrap it in a promise without rir code.
-        prom = compilePromiseNoRir(ctx, CAR(arg));
+        std::cout << "Woups!\n";
+        prom = compilePromise(ctx, CAR(arg));
     } else { // ArgType::PROMISE
         // Compile the expression as a promise.
         prom = compilePromise(ctx, CAR(arg));
