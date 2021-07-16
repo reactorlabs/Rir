@@ -181,7 +181,8 @@ typedef struct RPRSTACK {
 } RPRSTACK;
 extern "C" struct RPRSTACK* R_PendingPromises;
 
-SEXP evaluatePromise(SEXP e, InterpreterInstance* ctx, Opcode* pc) {
+SEXP evaluatePromise(SEXP e, InterpreterInstance* ctx, Opcode* pc,
+                     bool delayNamed) {
     // if already evaluated, return the value
     if (PRVALUE(e) && PRVALUE(e) != R_UnboundValue) {
         e = PRVALUE(e);
@@ -215,7 +216,8 @@ SEXP evaluatePromise(SEXP e, InterpreterInstance* ctx, Opcode* pc) {
         R_PendingPromises = prstack.next;
         SET_PRSEEN(e, 0);
         SET_PRVALUE(e, val);
-        ENSURE_NAMEDMAX(val);
+        if (!delayNamed)
+            ENSURE_NAMEDMAX(val);
         SET_PRENV(e, R_NilValue);
 
         assert(TYPEOF(val) != PROMSXP && "promise returned promise");
@@ -1301,18 +1303,10 @@ enum class Unop { PLUSOP, MINUSOP };
             R_Visible = static_cast<Rboolean>(flag != 1);                      \
         SEXP call = getSrcForCall(c, pc - 1, ctx);                             \
                                                                                \
-        if (!env || !(isObject(lhs) || isObject(rhs))) {                       \
-            SEXPREC arglist2 = createFakeCONS(R_NilValue);                     \
-            SEXPREC arglist = createFakeCONS(&arglist2);                       \
-            arglist.u.listsxp.carval = lhs;                                    \
-            arglist2.u.listsxp.carval = rhs;                                   \
-            res = blt(call, prim, &arglist, env);                              \
-        } else {                                                               \
-            SEXP arglist = CONS_NR(lhs, CONS_NR(rhs, R_NilValue));             \
-            ostack_push(ctx, arglist);                                         \
-            res = blt(call, prim, arglist, env);                               \
-            ostack_pop(ctx);                                                   \
-        }                                                                      \
+        SEXP arglist = CONS_NR(lhs, CONS_NR(rhs, R_NilValue));                 \
+        ostack_push(ctx, arglist);                                             \
+        res = blt(call, prim, arglist, env);                                   \
+        ostack_pop(ctx);                                                       \
                                                                                \
         if (flag < 2)                                                          \
             R_Visible = static_cast<Rboolean>(flag != 1);                      \
@@ -1780,9 +1774,11 @@ size_t expandDotDotDotCallArgs(InterpreterInstance* ctx, size_t n,
                     args.push_back(R_MissingArg);
                     names.push_back(R_NilValue);
                 }
-            } else if (ellipsis == R_NilValue) {
+            } else if (ellipsis == R_NilValue || ellipsis == R_UnboundValue) {
             } else {
-                assert(ellipsis == R_UnboundValue);
+                // TODO: why does this happen in SERIALIZE CHAOS?
+                args.push_back(ellipsis);
+                names.push_back(R_NilValue);
             }
         }
     }
@@ -3843,30 +3839,43 @@ SEXP rirApplyClosure(SEXP ast, SEXP op, SEXP arglist, SEXP rho,
                      SEXP suppliedvars) {
     auto ctx = globalContext();
 
-    RList args(arglist);
     size_t nargs = 0;
-    std::vector<Immediate> names;
-    for (auto arg = args.begin(), end = args.end(); arg != end; ++arg) {
-        ostack_push(ctx, *arg);
-        if (arg.hasTag()) {
-            names.resize(nargs + 1);
-            names[nargs] = Pool::insert(arg.tag());
+    Immediate* names = nullptr;
+    {
+        RList args(arglist);
+        auto n = Pool::insert(R_NilValue);
+        std::vector<Immediate> namesList;
+        for (auto arg = args.begin(), end = args.end(); arg != end; ++arg) {
+            ostack_push(ctx, *arg);
+            if (arg.hasTag()) {
+                namesList.resize(nargs + 1, n);
+                namesList[nargs] = Pool::insert(arg.tag());
+            }
+            nargs++;
         }
-        nargs++;
-    }
-    if (!names.empty()) {
-        names.resize(nargs);
+        if (!namesList.empty()) {
+            auto namesStore = Rf_allocVector(RAWSXP, sizeof(Immediate) * nargs);
+            names = (Immediate*)RAW(namesStore);
+            for (size_t i = 0; i < nargs; ++i) {
+                if (i < namesList.size())
+                    names[i] = namesList[i];
+                else
+                    names[i] = n;
+            }
+            PROTECT(namesStore);
+        }
     }
 
     CallContext call(ArglistOrder::NOT_REORDERED, nullptr, op, nargs, ast,
-                     ostack_cell_at(ctx, (long)nargs - 1),
-                     names.empty() ? nullptr : names.data(), rho, suppliedvars,
-                     Context(), ctx);
+                     ostack_cell_at(ctx, (long)nargs - 1), names, rho,
+                     suppliedvars, Context(), ctx);
     call.arglist = arglist;
     call.safeForceArgs();
 
     auto res = rirCall(call, ctx);
     ostack_popn(ctx, call.passedArgs);
+    if (names)
+        UNPROTECT(1);
     return res;
 }
 

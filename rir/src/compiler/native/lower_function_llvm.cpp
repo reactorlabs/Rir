@@ -1926,7 +1926,8 @@ llvm::Value* LowerFunctionLLVM::fastVeceltOkNative(llvm::Value* v) {
     checkIsSexp(v, "in IsFastVeceltOkNative");
     auto attrs = attr(v);
     auto isNil = builder.CreateICmpEQ(attrs, constant(R_NilValue, t::SEXP));
-    return createSelect2(isNil, [&]() { return builder.getTrue(); },
+    auto ok = builder.CreateAnd(builder.CreateNot(isObj(v)), isNil);
+    return createSelect2(ok, [&]() { return builder.getTrue(); },
                          [&]() {
                              auto isMatr1 = builder.CreateICmpEQ(
                                  tag(attrs), constant(R_DimSymbol, t::SEXP));
@@ -3258,6 +3259,21 @@ void LowerFunctionLLVM::compile() {
 
             case Tag::CallBuiltin: {
                 auto b = CallBuiltin::Cast(i);
+
+                // TODO: this is not sound... There are other ways to call
+                // remove... What we should do instead is trap do_remove in gnur
+                // and clear the cache!
+                if (b->builtinId == blt("remove")) {
+                    if (bindingsCache.count(b->env())) {
+                        auto& be = bindingsCache[b->env()];
+                        for (const auto& b : be)
+                            builder.CreateStore(
+                                llvm::ConstantPointerNull::get(t::SEXP),
+                                builder.CreateGEP(bindingsCacheBase,
+                                                  c(b.second)));
+                    }
+                }
+
                 if (compileDotcall(
                         b, [&]() { return constant(b->builtinSexp, t::SEXP); },
                         [&](size_t i) { return R_NilValue; })) {
@@ -4177,15 +4193,14 @@ void LowerFunctionLLVM::compile() {
                         res = builder.CreateAnd(
                             res, builder.CreateICmpEQ(
                                      attr(a), constant(R_NilValue, t::SEXP)));
-                    } else {
-                        if (arg->type.maybeNotFastVecelt() &&
-                            !t->typeTest.maybeNotFastVecelt()) {
-                            res = builder.CreateAnd(res, fastVeceltOkNative(a));
-                        }
-                        if (arg->type.maybeObj() && !t->typeTest.maybeObj()) {
-                            res = builder.CreateAnd(
-                                res, builder.CreateNot(isObj(a)));
-                        }
+                    }
+                    if (arg->type.maybeNotFastVecelt() &&
+                        !t->typeTest.maybeNotFastVecelt()) {
+                        res = builder.CreateAnd(res, fastVeceltOkNative(a));
+                    } else if (arg->type.maybeObj() &&
+                               !t->typeTest.maybeObj()) {
+                        res =
+                            builder.CreateAnd(res, builder.CreateNot(isObj(a)));
                     }
                     setVal(i, builder.CreateZExt(res, t::Int));
                 } else {
@@ -5762,9 +5777,9 @@ void LowerFunctionLLVM::compile() {
                         static std::vector<std::string> leaky;
                         const char* msg = nullptr;
                         static const char* defaultMsg = "";
-                        if (Parameter::RIR_CHECK_PIR_TYPES > 1) {
+                        if (true || Parameter::RIR_CHECK_PIR_TYPES > 1) {
                             std::stringstream str;
-                            i->printRecursive(str, 2);
+                            i->printRecursive(str, 4);
                             leaky.push_back(str.str());
                             msg = leaky.back().c_str();
                         } else {
