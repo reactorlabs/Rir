@@ -1307,17 +1307,23 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) {
             bool swapTrueFalse = false;
             Instruction* deoptCondition = nullptr;
             Value* branchCondition;
+            Value* v = nullptr;
             bool assumeBB0 = false;
+            bool isDeopt = false;
+            auto negateAssumption = false;
 
             // Conditional jump
             switch (bc.bc) {
             case Opcode::brtrue_:
             case Opcode::brfalse_: {
-                auto v = branchCondition = cur.stack.pop();
+                auto feedbackIsTrue = false;
+
+                v = branchCondition = cur.stack.pop();
                 if (auto c = Instruction::Cast(branchCondition)) {
                     if (c->typeFeedback.value == True::instance()) {
                         assumeBB0 = bc.bc == Opcode::brtrue_;
                         deoptCondition = c;
+                        feedbackIsTrue = true;
                     }
                     if (c->typeFeedback.value == False::instance()) {
                         assumeBB0 = bc.bc == Opcode::brfalse_;
@@ -1325,16 +1331,31 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) {
                     }
                 }
 
+                isDeopt = deoptCondition && !inPromise() && !inlining();
+
                 if (!branchCondition->type.isA(PirType::test())) {
                     v = insert(new Identical(branchCondition,
                                              bc.bc == Opcode::brtrue_
                                                  ? (Value*)True::instance()
                                                  : (Value*)False::instance(),
                                              PirType::val()));
+
+                    if (isDeopt) {
+                        // negateAssumption = (bc.bc == Opcode::brfalse_);
+
+                        if ((bc.bc == Opcode::brtrue_) != feedbackIsTrue)
+                            negateAssumption = true;
+                    }
+
                 } else {
-                    swapTrueFalse = bc.bc == Opcode::brfalse_;
+
+                    if (isDeopt) {
+                        if (!feedbackIsTrue)
+                            negateAssumption = true;
+                    } else {
+                        swapTrueFalse = bc.bc == Opcode::brfalse_;
+                    }
                 }
-                insert(new Branch(v));
                 break;
             }
             case Opcode::beginloop_:
@@ -1342,6 +1363,13 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) {
                 return nullptr;
             default:
                 assert(false);
+            }
+
+            Checkpoint* cp = nullptr;
+            if (!isDeopt) {
+                insert(new Branch(v));
+            } else {
+                cp = insert(new Checkpoint());
             }
 
             BB* branch = insert.createBB();
@@ -1354,24 +1382,33 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) {
                 insert.setBranch(branch, fall);
             }
 
-            if (deoptCondition && !inPromise() && !inlining()) {
-                auto deopt = assumeBB0 ? insert.getCurrentBB()->falseBranch()
-                                       : insert.getCurrentBB()->trueBranch();
-                insert.enterBB(deopt);
+            if (isDeopt) {
+
+                auto assumeBranch = branch;
+                auto deoptBranch = fall;
+
+                insert.enterBB(deoptBranch);
 
                 auto sp = insert.registerFrameState(
-                    srcCode, (deopt == fall) ? nextPos : trg, cur.stack,
-                    inPromise());
-                auto offset = (uintptr_t)deoptCondition->typeFeedback.origin -
-                              (uintptr_t)srcCode;
-                DeoptReason reason = {DeoptReason::DeadBranchReached, srcCode,
-                                      (uint32_t)offset};
-                insert(new RecordDeoptReason(reason, deoptCondition));
+                    srcCode, assumeBB0 ? nextPos : trg, cur.stack, inPromise());
+
                 insert(new Deopt(sp));
 
-                insert.enterBB(deopt == fall ? branch : fall);
-                finger = (deopt == fall) ? trg : nextPos;
+                insert.enterBB(assumeBranch);
 
+                finger = assumeBB0 ? trg : nextPos;
+
+                auto assumption = new Assume(v, cp);
+                if (negateAssumption)
+                    assumption->Not();
+
+                //  ************************ negate feedback?  **********
+                assumption->feedbackOrigin.push_back(
+                    {deoptCondition->typeFeedback.srcCode,
+                     deoptCondition->typeFeedback.origin});
+                insert(assumption);
+
+                // ******************  //
                 // If we deopt on a typecheck, then we should record that
                 // information by casting the value.
                 if (assumeBB0)
@@ -1389,6 +1426,7 @@ Value* Rir2Pir::tryTranslate(rir::Code* srcCode, Builder& insert) {
                                             block = true;
                                     }
                                     if (!block) {
+
                                         auto cast = insert(new CastType(
                                             e, CastType::Downcast,
                                             PirType::any(), tt->typeTest));
